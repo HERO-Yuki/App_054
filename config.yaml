@@ -1,0 +1,20 @@
+# Steam Sale Notifier 設定ファイル
+# 値を変更したらコミットしてください。次回実行から反映されます。
+
+# 価格を取得する国コード(通貨・地域)
+country_code: jp
+
+# ストア情報の言語
+language: japanese
+
+# この割引率(%)未満のセールは通知しない
+min_discount: 20
+
+# 1回の実行で通知するゲーム数の上限(超過分は「他 N 件」と表示)
+max_notify: 30
+
+# 初回実行時にサマリー形式で通知する(false にすると初回から個別通知)
+first_run_summary: true
+
+# 価格取得リクエストの間隔(秒)
+request_interval_sec: 1.2

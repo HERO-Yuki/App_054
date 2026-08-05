@@ -1,0 +1,19 @@
+# 認証情報(絶対にコミットしない)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# state.json は意図的にコミット対象(キープアライブのため .gitignore に入れない)
