@@ -22,6 +22,7 @@ DEFAULTS: dict[str, Any] = {
     "max_notify": 30,
     "first_run_summary": True,
     "request_interval_sec": 1.2,
+    "notify_style": "card",
 }
 
 
@@ -49,6 +50,8 @@ class Config:
     max_notify: int
     first_run_summary: bool
     request_interval_sec: float
+    # "card" = 1ゲーム1カード(画像付き) / "list" = 1行1ゲームのコンパクト表示
+    notify_style: str
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             max_notify=_as_int(merged["max_notify"], "max_notify"),
             first_run_summary=_as_bool(merged["first_run_summary"], "first_run_summary"),
             request_interval_sec=_as_float(merged["request_interval_sec"], "request_interval_sec"),
+            notify_style=_as_choice(merged["notify_style"], "notify_style", ("card", "list")),
         )
     except ConfigError:
         raise
@@ -135,4 +139,12 @@ def _as_float(value: Any, name: str) -> float:
 def _as_bool(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"{name} は true / false で指定してください(現在値: {value!r})")
+    return value
+
+
+def _as_choice(value: Any, name: str, choices: tuple[str, ...]) -> str:
+    if not isinstance(value, str) or value not in choices:
+        raise ConfigError(
+            f"{name} は {' / '.join(choices)} のいずれかで指定してください(現在値: {value!r})"
+        )
     return value

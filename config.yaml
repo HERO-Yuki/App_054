@@ -18,3 +18,8 @@ first_run_summary: true
 
 # 価格取得リクエストの間隔(秒)
 request_interval_sec: 1.2
+
+# 通知の表示形式
+#   card = 1ゲーム1カード(ヘッダー画像付き・見栄え重視)
+#   list = 1行1ゲームのコンパクト表示(一覧性重視・画像なし)
+notify_style: card

@@ -32,6 +32,8 @@ EMBEDS_PER_MESSAGE = 10
 SUMMARY_TOP_N = 10
 EMBED_COLOR = 0x66C0F4  # Steam ブルー
 ERROR_COLOR = 0xE74C3C
+# list形式: embed description の上限4096文字に対する安全マージン
+LIST_EMBED_CHAR_BUDGET = 3500
 
 MAX_RETRIES = 3
 BACKOFF_BASE_SEC = 2.0
@@ -54,10 +56,42 @@ def build_sale_embed(sale: SaleInfo) -> dict[str, Any]:
     }
 
 
-def build_sale_messages(sales: Sequence[SaleInfo], max_notify: int) -> list[dict[str, Any]]:
+def build_sale_line(sale: SaleInfo) -> str:
+    """list形式の1行。割引率 / タイトル(ストアへのリンク) / 定価 / 現在価格。"""
+    name = sale.name.replace("[", "(").replace("]", ")")  # Markdownリンクの括弧と衝突しないように
+    url = STORE_URL.format(appid=sale.appid)
+    price = f"**{sale.final_formatted}**"
+    if sale.initial_formatted:
+        price = f"~~{sale.initial_formatted}~~ → {price}"
+    return f"**{sale.discount_percent}%** [{name}]({url}) {price}"
+
+
+def _pack_lines_into_embeds(lines: Sequence[str]) -> list[dict[str, Any]]:
+    """行のリストを、description の文字数上限を超えないよう embed に詰める。"""
+    embeds: list[dict[str, Any]] = []
+    buffer: list[str] = []
+    size = 0
+    for line in lines:
+        if buffer and size + len(line) + 1 > LIST_EMBED_CHAR_BUDGET:
+            embeds.append({"description": "\n".join(buffer), "color": EMBED_COLOR})
+            buffer, size = [], 0
+        buffer.append(line)
+        size += len(line) + 1
+    if buffer:
+        embeds.append({"description": "\n".join(buffer), "color": EMBED_COLOR})
+    return embeds
+
+
+def build_sale_messages(
+    sales: Sequence[SaleInfo],
+    max_notify: int,
+    style: str = "card",
+) -> list[dict[str, Any]]:
     """通常通知のペイロード一覧を生成する。
 
-    割引率降順に並べ、max_notify 件までを embed 10 個ずつのメッセージに分割。
+    割引率降順に並べ、max_notify 件までを通知。
+    - style="card": 1ゲーム1embed(画像付き)、embed 10個ずつのメッセージに分割
+    - style="list": 1行1ゲームのコンパクト表示(リンク可・画像なし)
     上限超過分は最終メッセージの content に「他 N 件」と付記する(FR-06)。
     """
     if not sales:
@@ -66,26 +100,34 @@ def build_sale_messages(sales: Sequence[SaleInfo], max_notify: int) -> list[dict
     shown = ordered[:max_notify]
     omitted = len(ordered) - len(shown)
 
+    if style == "list":
+        embed_groups = _chunk(_pack_lines_into_embeds([build_sale_line(s) for s in shown]))
+    else:
+        embed_groups = _chunk([build_sale_embed(s) for s in shown])
+
     messages: list[dict[str, Any]] = []
-    chunks = [
-        shown[i : i + EMBEDS_PER_MESSAGE]
-        for i in range(0, len(shown), EMBEDS_PER_MESSAGE)
-    ]
-    for index, chunk in enumerate(chunks):
+    for index, chunk in enumerate(embed_groups):
         content = ""
         if index == 0:
             content = f"🎮 所有ゲームがセール中です({len(ordered)}件)"
-        if index == len(chunks) - 1 and omitted > 0:
+        if index == len(embed_groups) - 1 and omitted > 0:
             suffix = f"…他 {omitted} 件は省略しました"
             content = f"{content}\n{suffix}" if content else suffix
-        message: dict[str, Any] = {"embeds": [build_sale_embed(s) for s in chunk]}
+        message: dict[str, Any] = {"embeds": chunk}
         if content:
             message["content"] = content
         messages.append(message)
     return messages
 
 
-def build_summary_messages(sales: Sequence[SaleInfo]) -> list[dict[str, Any]]:
+def _chunk(embeds: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    return [embeds[i : i + EMBEDS_PER_MESSAGE] for i in range(0, len(embeds), EMBEDS_PER_MESSAGE)]
+
+
+def build_summary_messages(
+    sales: Sequence[SaleInfo],
+    style: str = "card",
+) -> list[dict[str, Any]]:
     """初回実行時のサマリー通知(FR-05)。割引率上位10件のみ列挙する。"""
     ordered = sorted(sales, key=lambda s: (-s.discount_percent, s.appid))
     top = ordered[:SUMMARY_TOP_N]
@@ -97,7 +139,10 @@ def build_summary_messages(sales: Sequence[SaleInfo]) -> list[dict[str, Any]]:
         content += f"\n(以下は割引率上位 {len(top)} 件です)"
     message: dict[str, Any] = {"content": content}
     if top:
-        message["embeds"] = [build_sale_embed(s) for s in top]
+        if style == "list":
+            message["embeds"] = _pack_lines_into_embeds([build_sale_line(s) for s in top])
+        else:
+            message["embeds"] = [build_sale_embed(s) for s in top]
     return [message]
 
 

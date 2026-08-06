@@ -55,6 +55,19 @@ class TestLoadConfig:
         config = load_config(Path(__file__).parent.parent / "config.yaml")
         assert config.min_discount == 20
         assert config.request_interval_sec == pytest.approx(1.2)
+        assert config.notify_style == "card"
+
+    def test_notify_style_default_and_list(self, tmp_path: Path) -> None:
+        assert load_config(tmp_path / "none.yaml").notify_style == "card"
+        path = tmp_path / "config.yaml"
+        path.write_text("notify_style: list\n", encoding="utf-8")
+        assert load_config(path).notify_style == "list"
+
+    def test_notify_style_invalid_raises(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text("notify_style: table\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="notify_style"):
+            load_config(path)
 
 
 class TestLoadSecrets:

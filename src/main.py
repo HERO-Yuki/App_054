@@ -80,10 +80,10 @@ def run(
     to_notify, new_games = state_mod.apply_diff(prev_games, sales, failed, now)
 
     if first_run and config.first_run_summary:
-        messages = notifier.build_summary_messages(sales)
+        messages = notifier.build_summary_messages(sales, style=config.notify_style)
         notified_count = len(sales)
     else:
-        messages = notifier.build_sale_messages(to_notify, config.max_notify)
+        messages = notifier.build_sale_messages(to_notify, config.max_notify, style=config.notify_style)
         shown = to_notify[: config.max_notify]
         state_mod.revert_unnotified(new_games, prev_games, to_notify[config.max_notify :])
         notified_count = len(shown)

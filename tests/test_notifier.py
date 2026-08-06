@@ -99,6 +99,55 @@ class TestBuildSaleMessages:
         assert "¥ 1,000" in embed["description"]  # セール価格
 
 
+class TestBuildSaleMessagesListStyle:
+    def test_15_sales_fit_in_one_message(self) -> None:
+        sales = [sale(1000 + i, 21 + i, name=f"日本語タイトル {i}") for i in range(15)]
+        messages = build_sale_messages(sales, max_notify=30, style="list")
+        assert len(messages) == 1
+        embeds = messages[0]["embeds"]
+        assert len(embeds) == 1
+        lines = embeds[0]["description"].split("\n")
+        assert len(lines) == 15
+        assert "(15件)" in messages[0]["content"]
+
+    def test_line_contains_all_columns(self) -> None:
+        messages = build_sale_messages([sale(620, 90, name="Portal 2")], max_notify=30, style="list")
+        line = messages[0]["embeds"][0]["description"]
+        assert "**90%**" in line                                    # 割引率
+        assert "[Portal 2](https://store.steampowered.com/app/620/)" in line  # タイトル=ストアリンク
+        assert "~~¥ 2,000~~" in line                                # 定価(打ち消し線)
+        assert "**¥ 1,000**" in line                                # 現在価格
+
+    def test_sorted_desc_and_omitted_note(self) -> None:
+        messages = build_sale_messages(eighty_sales(), max_notify=30, style="list")
+        all_lines = [
+            line
+            for m in messages
+            for e in m["embeds"]
+            for line in e["description"].split("\n")
+        ]
+        assert len(all_lines) == 30
+        discounts = [int(line.split("%**")[0].strip("*")) for line in all_lines]
+        assert discounts == sorted(discounts, reverse=True)
+        assert "他 50 件" in messages[-1]["content"]
+
+    def test_descriptions_within_discord_limit(self) -> None:
+        # 長いタイトルでも embed description の4096文字制限を超えない
+        sales = [sale(1000 + i, 50, name="と" * 120 + str(i)) for i in range(80)]
+        messages = build_sale_messages(sales, max_notify=80, style="list")
+        for message in messages:
+            assert len(message["embeds"]) <= EMBEDS_PER_MESSAGE
+            for embed in message["embeds"]:
+                assert len(embed["description"]) <= 4096
+
+    def test_brackets_in_title_escaped(self) -> None:
+        messages = build_sale_messages(
+            [sale(1, 50, name="変な[タイトル]のゲーム")], max_notify=30, style="list"
+        )
+        line = messages[0]["embeds"][0]["description"]
+        assert "[変な(タイトル)のゲーム](" in line  # リンク記法を壊さない
+
+
 class TestBuildSummaryMessages:
     def test_first_run_summary_format(self) -> None:
         messages = build_summary_messages(eighty_sales())
@@ -119,6 +168,13 @@ class TestBuildSummaryMessages:
         messages = build_summary_messages([])
         assert "0 本" in messages[0]["content"]
         assert "embeds" not in messages[0]
+
+    def test_summary_list_style_top10_lines(self) -> None:
+        messages = build_summary_messages(eighty_sales(), style="list")
+        assert len(messages) == 1
+        assert "セットアップ完了" in messages[0]["content"]
+        lines = messages[0]["embeds"][0]["description"].split("\n")
+        assert len(lines) == 10  # 上位10件のみ(FR-05は形式によらず維持)
 
 
 class TestBuildErrorMessage:

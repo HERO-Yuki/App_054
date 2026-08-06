@@ -135,6 +135,7 @@ Steam のウィッシュリストにはセール通知がありますが、**購
 | `country_code` | jp | 価格の国・通貨 |
 | `language` | japanese | ストア情報の言語 |
 | `first_run_summary` | true | 初回実行をサマリー形式にする |
+| `notify_style` | card | 通知の見た目。`card`=1ゲーム1カード(画像付き) / `list`=1行1ゲームのコンパクト表示 |
 | `request_interval_sec` | 1.2 | Steam への問い合わせ間隔(秒)。通常変更不要 |
 
 ## 通知のしくみ
