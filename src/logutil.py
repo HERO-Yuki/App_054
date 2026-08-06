@@ -13,6 +13,13 @@ from typing import Iterable
 MASK = "***"
 
 
+def mask_text(text: str, secret_values: Iterable[str]) -> str:
+    """文字列中の秘密値をマスクする(ログ以外の出力経路用)。"""
+    for secret in sorted((s for s in secret_values if s), key=len, reverse=True):
+        text = text.replace(secret, MASK)
+    return text
+
+
 class MaskingFormatter(logging.Formatter):
     """フォーマット後の文字列から秘密値を置換するフォーマッタ。"""
 

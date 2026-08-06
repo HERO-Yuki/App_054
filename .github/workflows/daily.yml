@@ -1,0 +1,91 @@
+# Steam Sale Notifier — 1日1回の自動実行(FR-07 / FR-08 / FR-09)
+name: Daily sale check
+
+on:
+  schedule:
+    # JST 10:17 に実行。
+    # - Steam のセール切替(太平洋時間 10:00 頃 = JST 深夜2〜3時)を朝の実行で確実に拾う
+    # - 毎時00分はランナー混雑で遅延しやすいため 17 分を指定
+    #
+    # NOTE: schedule の timezone: フィールドは 2026年3月以降に追加された機能。
+    # もし「Workflow ファイルが無効」と表示される・スケジュール実行されない場合は、
+    # timezone 行を削除し、cron を UTC 表記に置き換えること:
+    #   - cron: '17 1 * * *'   # UTC 01:17 = JST 10:17
+    - cron: '17 10 * * *'
+      timezone: 'Asia/Tokyo'
+  # セットアップ直後の動作確認用。Actions タブの「Run workflow」から手動実行できる
+  workflow_dispatch:
+
+# state.json の自動コミットと、ワークフロー再有効化 API の呼び出しに必要
+permissions:
+  contents: write
+  actions: write
+
+# 手動実行と cron が重なったときの多重実行(コミット競合)を防ぐ
+concurrency:
+  group: steam-sale-notifier
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 依存をインストール
+        run: pip install -r requirements.txt
+
+      - name: セール確認と Discord 通知
+        env:
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          STEAM_ID: ${{ secrets.STEAM_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_ERROR_WEBHOOK_URL: ${{ secrets.DISCORD_ERROR_WEBHOOK_URL }}
+        run: python -m src.main run
+
+      # run がクラッシュしても last_run を更新する(FR-09)。
+      # これにより失敗した日もコミットが発生し、60日無効化カウンタがリセットされる
+      - name: 失敗時も last_run を更新(キープアライブ)
+        if: failure()
+        run: python -m src.main update-state --status failed
+
+      # セールに変化がない日も last_run の更新で毎日必ずコミットされる(FR-08 一次対策)
+      - name: state.json をコミット
+        if: always()
+        run: |
+          if [ -f state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git diff --cached --quiet || git commit -m "chore: state.json 更新 ($(TZ=Asia/Tokyo date +%F))"
+            git push
+          fi
+
+      - name: 失敗を Discord に通知
+        if: failure()
+        env:
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          STEAM_ID: ${{ secrets.STEAM_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_ERROR_WEBHOOK_URL: ${{ secrets.DISCORD_ERROR_WEBHOOK_URL }}
+        run: >
+          python -m src.main notify-error
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      # FR-08 二次対策(保険): 毎月1日にワークフローを明示的に再有効化する。
+      # 失敗しても本体処理には影響させない
+      - name: 毎月1日にワークフローを再有効化
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(TZ=Asia/Tokyo date +%d)" = "01" ]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/daily.yml/enable"
+          fi

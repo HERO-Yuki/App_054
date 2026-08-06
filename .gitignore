@@ -1,6 +1,9 @@
 # 認証情報(絶対にコミットしない)
 .env
 
+# 実行失敗時のエラー概要(notify-error が読む一時ファイル)
+last_error.txt
+
 # Python
 __pycache__/
 *.py[cod]

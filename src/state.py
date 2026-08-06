@@ -151,3 +151,23 @@ def apply_diff(
         # 取得成功でセール対象外 → 削除(new_games に入れない)
 
     return to_notify, new_games
+
+
+def revert_unnotified(
+    new_games: dict[str, Any],
+    prev_games: Mapping[str, Any],
+    omitted: Sequence[SaleInfo],
+) -> None:
+    """max_notify 超過で実際には通知しなかった分を「通知済み」にしない(決定D)。
+
+    apply_diff は通知対象すべてを通知済みとして new_games に記録するため、
+    件数制限で省略されたゲームは前回の状態に巻き戻す。
+    → 翌日以降、枠が空けば繰り上がって通知される。
+    """
+    for sale in omitted:
+        key = str(sale.appid)
+        prev = prev_games.get(key)
+        if prev is None:
+            new_games.pop(key, None)
+        else:
+            new_games[key] = dict(prev)
