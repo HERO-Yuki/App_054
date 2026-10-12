@@ -83,10 +83,8 @@ def run(
         messages = notifier.build_summary_messages(sales, style=config.notify_style)
         notified_count = len(sales)
     else:
-        messages = notifier.build_sale_messages(to_notify, config.max_notify, style=config.notify_style)
-        shown = to_notify[: config.max_notify]
-        state_mod.revert_unnotified(new_games, prev_games, to_notify[config.max_notify :])
-        notified_count = len(shown)
+        messages = notifier.build_sale_messages(to_notify, style=config.notify_style)
+        notified_count = len(to_notify)
 
     if messages:
         notifier.send_messages(secrets.discord_webhook_url, messages, dry_run=dry_run)

@@ -55,22 +55,34 @@ def assert_within_discord_limits(message: dict[str, Any]) -> None:
 
 class TestBuildSaleMessages:
     def test_80_sales_within_limits(self) -> None:
-        # 受け入れ基準の本体。max_notify=30 → 10件×3メッセージ
-        messages = build_sale_messages(eighty_sales(), max_notify=30)
-        assert len(messages) == 3
+        # 受け入れ基準の本体。80件すべてを通知し、各メッセージは Discord の制限内
+        messages = build_sale_messages(eighty_sales())
+        assert len(messages) == 8
         for message in messages:
             assert_within_discord_limits(message)
         total_embeds = sum(len(m["embeds"]) for m in messages)
-        assert total_embeds == 30
+        assert total_embeds == 80
 
-    def test_omitted_count_appended_to_last_message(self) -> None:
-        messages = build_sale_messages(eighty_sales(), max_notify=30)
-        assert "他 50 件" in messages[-1]["content"]
-        # 途中のメッセージには付かない
-        assert "他" not in messages[1].get("content", "")
+    def test_all_sales_notified_without_omission_note(self) -> None:
+        # 「他 N 件は省略」のような表示はしない(全件を書き込む)
+        messages = build_sale_messages(eighty_sales())
+        for message in messages:
+            content = message.get("content", "")
+            assert "他" not in content
+            assert "省略" not in content
+        assert "(80件)" in messages[0]["content"]
+
+    def test_300_sales_all_notified_within_limits(self) -> None:
+        sales = [sale(appid=5000 + i, discount=21 + (i % 80)) for i in range(300)]
+        messages = build_sale_messages(sales)
+        assert sum(len(m["embeds"]) for m in messages) == 300
+        titles = {e["title"] for m in messages for e in m["embeds"]}
+        assert len(titles) == 300  # 取りこぼし・重複なし
+        for message in messages:
+            assert_within_discord_limits(message)
 
     def test_sorted_by_discount_desc(self) -> None:
-        messages = build_sale_messages(eighty_sales(), max_notify=30)
+        messages = build_sale_messages(eighty_sales())
         discounts = []
         for message in messages:
             for embed in message["embeds"]:
@@ -80,16 +92,16 @@ class TestBuildSaleMessages:
         assert discounts[0] == 100
 
     def test_no_omission_note_when_under_limit(self) -> None:
-        messages = build_sale_messages([sale(1, 50), sale(2, 30)], max_notify=30)
+        messages = build_sale_messages([sale(1, 50), sale(2, 30)])
         assert len(messages) == 1
         assert "他" not in messages[0].get("content", "")
         assert len(messages[0]["embeds"]) == 2
 
     def test_empty_sales_returns_no_messages(self) -> None:
-        assert build_sale_messages([], max_notify=30) == []
+        assert build_sale_messages([]) == []
 
     def test_embed_contents(self) -> None:
-        messages = build_sale_messages([sale(620, 90, name="Portal 2")], max_notify=30)
+        messages = build_sale_messages([sale(620, 90, name="Portal 2")])
         embed = messages[0]["embeds"][0]
         assert embed["title"] == "Portal 2"
         assert embed["url"] == "https://store.steampowered.com/app/620/"
@@ -102,7 +114,7 @@ class TestBuildSaleMessages:
 class TestBuildSaleMessagesListStyle:
     def test_15_sales_fit_in_one_message(self) -> None:
         sales = [sale(1000 + i, 21 + i, name=f"日本語タイトル {i}") for i in range(15)]
-        messages = build_sale_messages(sales, max_notify=30, style="list")
+        messages = build_sale_messages(sales, style="list")
         assert len(messages) == 1
         embeds = messages[0]["embeds"]
         assert len(embeds) == 1
@@ -111,53 +123,60 @@ class TestBuildSaleMessagesListStyle:
         assert "(15件)" in messages[0]["content"]
 
     def test_line_contains_all_columns(self) -> None:
-        messages = build_sale_messages([sale(620, 90, name="Portal 2")], max_notify=30, style="list")
+        messages = build_sale_messages([sale(620, 90, name="Portal 2")], style="list")
         line = messages[0]["embeds"][0]["description"]
         assert "**90%**" in line                                    # 割引率
         assert "[Portal 2](https://store.steampowered.com/app/620/)" in line  # タイトル=ストアリンク
         assert "~~¥ 2,000~~" in line                                # 定価(打ち消し線)
         assert "**¥ 1,000**" in line                                # 現在価格
 
-    def test_sorted_desc_and_omitted_note(self) -> None:
-        messages = build_sale_messages(eighty_sales(), max_notify=30, style="list")
+    def test_sorted_desc_and_all_lines_listed(self) -> None:
+        messages = build_sale_messages(eighty_sales(), style="list")
         all_lines = [
             line
             for m in messages
             for e in m["embeds"]
             for line in e["description"].split("\n")
         ]
-        assert len(all_lines) == 30
+        assert len(all_lines) == 80  # 全件(省略しない)
         discounts = [int(line.split("%**")[0].strip("*")) for line in all_lines]
         assert discounts == sorted(discounts, reverse=True)
-        assert "他 50 件" in messages[-1]["content"]
+        for message in messages:
+            assert "他" not in message.get("content", "")
+            assert_within_discord_limits(message)
 
     def test_descriptions_within_discord_limit(self) -> None:
         # 長いタイトルでも embed description の4096文字制限を超えない
         sales = [sale(1000 + i, 50, name="と" * 120 + str(i)) for i in range(80)]
-        messages = build_sale_messages(sales, max_notify=80, style="list")
+        messages = build_sale_messages(sales, style="list")
+        assert sum(len(e["description"].split("\n")) for m in messages for e in m["embeds"]) == 80
         for message in messages:
-            assert len(message["embeds"]) <= EMBEDS_PER_MESSAGE
+            assert_within_discord_limits(message)  # embed 合計 6000 文字も超えない
             for embed in message["embeds"]:
                 assert len(embed["description"]) <= 4096
 
     def test_brackets_in_title_escaped(self) -> None:
         messages = build_sale_messages(
-            [sale(1, 50, name="変な[タイトル]のゲーム")], max_notify=30, style="list"
+            [sale(1, 50, name="変な[タイトル]のゲーム")], style="list"
         )
         line = messages[0]["embeds"][0]["description"]
         assert "[変な(タイトル)のゲーム](" in line  # リンク記法を壊さない
 
 
 class TestBuildSummaryMessages:
-    def test_first_run_summary_format(self) -> None:
+    def test_first_run_summary_lists_all_sales(self) -> None:
         messages = build_summary_messages(eighty_sales())
-        assert len(messages) == 1
-        message = messages[0]
-        assert "セットアップ完了" in message["content"]
-        assert "80 本" in message["content"]
-        assert "明日以降" in message["content"]
-        assert len(message["embeds"]) == 10  # 上位10件のみ
-        assert_within_discord_limits(message)
+        assert len(messages) == 8  # 80件 → embed 10個ずつ
+        first = messages[0]
+        assert "セットアップ完了" in first["content"]
+        assert "80 本" in first["content"]
+        assert "明日以降" in first["content"]
+        assert "上位" not in first["content"]  # 「上位N件のみ」とは言わない
+        assert sum(len(m["embeds"]) for m in messages) == 80  # 全件を列挙
+        for message in messages:
+            assert_within_discord_limits(message)
+        for message in messages[1:]:
+            assert "content" not in message  # 説明文は先頭メッセージだけ
 
     def test_summary_with_few_sales(self) -> None:
         messages = build_summary_messages([sale(1, 50)])
@@ -169,12 +188,18 @@ class TestBuildSummaryMessages:
         assert "0 本" in messages[0]["content"]
         assert "embeds" not in messages[0]
 
-    def test_summary_list_style_top10_lines(self) -> None:
+    def test_summary_list_style_lists_all_lines(self) -> None:
         messages = build_summary_messages(eighty_sales(), style="list")
-        assert len(messages) == 1
         assert "セットアップ完了" in messages[0]["content"]
-        lines = messages[0]["embeds"][0]["description"].split("\n")
-        assert len(lines) == 10  # 上位10件のみ(FR-05は形式によらず維持)
+        lines = [
+            line
+            for m in messages
+            for e in m["embeds"]
+            for line in e["description"].split("\n")
+        ]
+        assert len(lines) == 80  # 全件(形式によらず省略しない)
+        for message in messages:
+            assert_within_discord_limits(message)
 
 
 class TestBuildErrorMessage:
@@ -217,18 +242,18 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 class TestSendMessages:
     def test_dry_run_prints_json_and_sends_nothing(self, capsys: pytest.CaptureFixture[str]) -> None:
-        messages = build_sale_messages(eighty_sales(), max_notify=30)
+        messages = build_sale_messages(eighty_sales())
         session = FakeSession([])
         send_messages(WEBHOOK, messages, dry_run=True, session=session)  # type: ignore[arg-type]
         captured = capsys.readouterr().out
         assert session.calls == []  # 送信していない
         payloads = json.loads(captured)  # JSONとして解析できる
-        assert len(payloads) == 3
+        assert len(payloads) == 8
         assert WEBHOOK not in captured  # Webhook URL は出力しない
 
     def test_sends_each_message(self) -> None:
         session = FakeSession([FakeResponse(204), FakeResponse(204)])
-        messages = build_sale_messages(eighty_sales()[:15], max_notify=30)
+        messages = build_sale_messages(eighty_sales()[:15])
         send_messages(WEBHOOK, messages, session=session)  # type: ignore[arg-type]
         assert len(session.calls) == 2
         assert session.calls[0]["url"] == WEBHOOK

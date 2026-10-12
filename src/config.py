@@ -19,11 +19,15 @@ DEFAULTS: dict[str, Any] = {
     "country_code": "jp",
     "language": "japanese",
     "min_discount": 20,
-    "max_notify": 30,
     "first_run_summary": True,
     "request_interval_sec": 1.2,
     "notify_style": "card",
 }
+
+
+# 廃止した設定項目。既存の config.yaml に残っていてもエラーにせず無視する。
+#   max_notify: 通知件数の上限は廃止(セール中の全ゲームを通知する)
+DEPRECATED_KEYS: frozenset[str] = frozenset({"max_notify"})
 
 
 class ConfigError(Exception):
@@ -47,7 +51,6 @@ class Config:
     country_code: str
     language: str
     min_discount: int
-    max_notify: int
     first_run_summary: bool
     request_interval_sec: float
     # "card" = 1ゲーム1カード(画像付き) / "list" = 1行1ゲームのコンパクト表示
@@ -84,7 +87,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             raise ConfigError(f"{config_path} の形式が不正です(キーと値のマッピングではありません)")
         data = loaded
 
-    unknown = set(data) - set(DEFAULTS)
+    unknown = set(data) - set(DEFAULTS) - DEPRECATED_KEYS
     if unknown:
         raise ConfigError(
             f"{config_path} に不明な設定項目があります: {', '.join(sorted(unknown))}"
@@ -96,7 +99,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             country_code=str(merged["country_code"]),
             language=str(merged["language"]),
             min_discount=_as_int(merged["min_discount"], "min_discount"),
-            max_notify=_as_int(merged["max_notify"], "max_notify"),
             first_run_summary=_as_bool(merged["first_run_summary"], "first_run_summary"),
             request_interval_sec=_as_float(merged["request_interval_sec"], "request_interval_sec"),
             notify_style=_as_choice(merged["notify_style"], "notify_style", ("card", "list")),

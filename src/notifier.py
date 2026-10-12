@@ -29,7 +29,8 @@ STORE_URL = "https://store.steampowered.com/app/{appid}/"
 HEADER_IMAGE_URL = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg"
 
 EMBEDS_PER_MESSAGE = 10
-SUMMARY_TOP_N = 10
+# 1メッセージ内の embed 文字数合計の上限(Discord は 6000)に対する安全マージン
+EMBED_CHARS_PER_MESSAGE = 5500
 EMBED_COLOR = 0x66C0F4  # Steam ブルー
 ERROR_COLOR = 0xE74C3C
 # list形式: embed description の上限4096文字に対する安全マージン
@@ -84,66 +85,80 @@ def _pack_lines_into_embeds(lines: Sequence[str]) -> list[dict[str, Any]]:
 
 def build_sale_messages(
     sales: Sequence[SaleInfo],
-    max_notify: int,
     style: str = "card",
 ) -> list[dict[str, Any]]:
     """通常通知のペイロード一覧を生成する。
 
-    割引率降順に並べ、max_notify 件までを通知。
-    - style="card": 1ゲーム1embed(画像付き)、embed 10個ずつのメッセージに分割
+    割引率降順に並べ、**対象の全件**を通知する(件数の上限・「他 N 件」表示はしない)。
+    - style="card": 1ゲーム1embed(画像付き)
     - style="list": 1行1ゲームのコンパクト表示(リンク可・画像なし)
-    上限超過分は最終メッセージの content に「他 N 件」と付記する(FR-06)。
+    Discord の上限(1メッセージ embed 10個・embed 文字数合計 6000)に収まるよう、
+    必要な数だけメッセージに分割して送る(FR-06)。
     """
     if not sales:
         return []
     ordered = sorted(sales, key=lambda s: (-s.discount_percent, s.appid))
-    shown = ordered[:max_notify]
-    omitted = len(ordered) - len(shown)
-
-    if style == "list":
-        embed_groups = _chunk(_pack_lines_into_embeds([build_sale_line(s) for s in shown]))
-    else:
-        embed_groups = _chunk([build_sale_embed(s) for s in shown])
+    embed_groups = _chunk(_build_embeds(ordered, style))
 
     messages: list[dict[str, Any]] = []
     for index, chunk in enumerate(embed_groups):
-        content = ""
-        if index == 0:
-            content = f"🎮 所有ゲームがセール中です({len(ordered)}件)"
-        if index == len(embed_groups) - 1 and omitted > 0:
-            suffix = f"…他 {omitted} 件は省略しました"
-            content = f"{content}\n{suffix}" if content else suffix
         message: dict[str, Any] = {"embeds": chunk}
-        if content:
-            message["content"] = content
+        if index == 0:
+            message["content"] = f"🎮 所有ゲームがセール中です({len(ordered)}件)"
         messages.append(message)
     return messages
 
 
+def _build_embeds(ordered: Sequence[SaleInfo], style: str) -> list[dict[str, Any]]:
+    if style == "list":
+        return _pack_lines_into_embeds([build_sale_line(s) for s in ordered])
+    return [build_sale_embed(s) for s in ordered]
+
+
+def _embed_chars(embed: dict[str, Any]) -> int:
+    return len(str(embed.get("title", ""))) + len(str(embed.get("description", "")))
+
+
 def _chunk(embeds: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    return [embeds[i : i + EMBEDS_PER_MESSAGE] for i in range(0, len(embeds), EMBEDS_PER_MESSAGE)]
+    """embed を、1メッセージあたり10個・文字数合計 EMBED_CHARS_PER_MESSAGE 以内に分割する。"""
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    size = 0
+    for embed in embeds:
+        chars = _embed_chars(embed)
+        if current and (len(current) >= EMBEDS_PER_MESSAGE or size + chars > EMBED_CHARS_PER_MESSAGE):
+            groups.append(current)
+            current, size = [], 0
+        current.append(embed)
+        size += chars
+    if current:
+        groups.append(current)
+    return groups
 
 
 def build_summary_messages(
     sales: Sequence[SaleInfo],
     style: str = "card",
 ) -> list[dict[str, Any]]:
-    """初回実行時のサマリー通知(FR-05)。割引率上位10件のみ列挙する。"""
+    """初回実行時のサマリー通知(FR-05)。セール中の**全件**を列挙する(省略しない)。
+
+    先頭メッセージに説明文を付け、続きは Discord の上限に合わせて複数メッセージに分割する。
+    """
     ordered = sorted(sales, key=lambda s: (-s.discount_percent, s.appid))
-    top = ordered[:SUMMARY_TOP_N]
     content = (
         f"✅ セットアップ完了。現在 {len(ordered)} 本の所有ゲームがセール中です。\n"
         "明日以降は、新しくセールが始まったもの・さらに値下げされたものだけをお知らせします。"
     )
-    if len(ordered) > len(top):
-        content += f"\n(以下は割引率上位 {len(top)} 件です)"
-    message: dict[str, Any] = {"content": content}
-    if top:
-        if style == "list":
-            message["embeds"] = _pack_lines_into_embeds([build_sale_line(s) for s in top])
-        else:
-            message["embeds"] = [build_sale_embed(s) for s in top]
-    return [message]
+    if not ordered:
+        return [{"content": content}]
+
+    messages: list[dict[str, Any]] = []
+    for index, chunk in enumerate(_chunk(_build_embeds(ordered, style))):
+        message: dict[str, Any] = {"embeds": chunk}
+        if index == 0:
+            message["content"] = content
+        messages.append(message)
+    return messages
 
 
 def build_error_message(error_summary: str, run_url: str, now: str) -> list[dict[str, Any]]:

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 import src.main as main
-from src.state import SaleInfo, load_state, revert_unnotified
+from src.state import load_state
 from src.steam import EmptyLibraryError, OwnedGame, PriceInfo
 
 ENV = {
@@ -99,29 +99,28 @@ class TestRun:
         assert saved is not None
         assert saved["last_run"] >= first_last_run  # 通知ゼロでも last_run は更新
 
-    def test_overflow_not_marked_notified_and_carried_over(
+    def test_all_sales_notified_at_once_without_omission(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sent_messages: list[dict[str, Any]]
     ) -> None:
-        # 決定D: max_notify=2 で5件セール → 2件通知、残り3件は翌日に繰り上がる
-        owned = [OwnedGame(i, f"G{i}", 0) for i in range(1, 6)]
-        prices = {i: price(i, 100 - i * 10) for i in range(1, 6)}  # 90,80,70,60,50%
+        # 件数の上限は廃止: 一気に多数のセールが来ても全件を通知し、全件を通知済みにする
+        owned = [OwnedGame(i, f"G{i}", 0) for i in range(1, 46)]
+        prices = {i: price(i, 100 - i) for i in range(1, 46)}  # 99%〜55%
         patch_steam(monkeypatch, owned, prices)
         state_path = tmp_path / "state.json"
-        config_path = make_config(tmp_path, max_notify=2, first_run_summary=False)
+        config_path = make_config(tmp_path, first_run_summary=False)
 
         main.run(state_path=state_path, config_path=config_path)
+
+        titles = [e["title"] for m in sent_messages for e in m["embeds"]]
+        assert len(titles) == 45  # 全件
+        assert all("他" not in m.get("content", "") for m in sent_messages)
         saved = load_state(state_path)
         assert saved is not None
-        assert set(saved["games"]) == {"1", "2"}  # 上位2件のみ通知済み
-        assert "他 3 件" in sent_messages[-1]["content"]
+        assert len(saved["games"]) == 45  # 全件が通知済み
 
         sent_messages.clear()
         main.run(state_path=state_path, config_path=config_path)
-        saved = load_state(state_path)
-        assert saved is not None
-        assert set(saved["games"]) == {"1", "2", "3", "4"}  # 次の2件が繰り上がり通知
-        titles = [e["title"] for m in sent_messages for e in m["embeds"]]
-        assert titles == ["G3", "G4"]
+        assert sent_messages == []  # 2回目は新規なし
 
     def test_dry_run_does_not_save_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sent_messages: list[dict[str, Any]]
@@ -229,19 +228,3 @@ class TestNotifyErrorCmd:
         monkeypatch.setattr(main, "ERROR_SUMMARY_PATH", tmp_path / "none.txt")
         main.cli(["notify-error", "--run-url", "https://example.com/run"])
         assert "失敗しました" in sent_messages[0]["embeds"][0]["description"]
-
-
-class TestRevertUnnotified:
-    def test_new_game_removed_and_known_game_reverted(self) -> None:
-        prev = {"2": {"name": "B", "discount_percent": 30, "final_price": 1, "notified_at": "t0"}}
-        new_games = {
-            "1": {"name": "A", "discount_percent": 90, "final_price": 1, "notified_at": "t1"},
-            "2": {"name": "B", "discount_percent": 70, "final_price": 1, "notified_at": "t1"},
-        }
-        omitted = [
-            SaleInfo(1, "A", 90, 1, 2, "", ""),
-            SaleInfo(2, "B", 70, 1, 2, "", ""),
-        ]
-        revert_unnotified(new_games, prev, omitted)
-        assert "1" not in new_games  # 新規だが未通知 → 記録しない
-        assert new_games["2"]["discount_percent"] == 30  # 上昇だが未通知 → 前回値のまま

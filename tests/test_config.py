@@ -26,7 +26,6 @@ class TestLoadConfig:
         assert config.country_code == "jp"
         assert config.language == "japanese"
         assert config.min_discount == 20
-        assert config.max_notify == 30
         assert config.first_run_summary is True
         assert config.request_interval_sec == pytest.approx(1.2)
 
@@ -36,7 +35,14 @@ class TestLoadConfig:
         config = load_config(path)
         assert config.min_discount == 50
         assert config.country_code == "us"
-        assert config.max_notify == 30  # 既定値が残る
+
+    def test_deprecated_max_notify_is_ignored(self, tmp_path: Path) -> None:
+        # 通知件数の上限は廃止。既存の config.yaml に max_notify が残っていてもエラーにしない
+        path = tmp_path / "config.yaml"
+        path.write_text("min_discount: 30\nmax_notify: 5\n", encoding="utf-8")
+        config = load_config(path)
+        assert config.min_discount == 30
+        assert not hasattr(config, "max_notify")
 
     def test_unknown_key_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
