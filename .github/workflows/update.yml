@@ -1,0 +1,68 @@
+# 本体(src/ と requirements.txt)を、配布元の最新版に更新する。
+# 「Use this template」で作ったコピーは配布元の変更が自動では届かないため、
+# Actions タブの「Run workflow」を押すだけで更新できるようにしている。
+#
+# 更新するもの : src/ と requirements.txt
+# 更新しないもの: config.yaml(設定)・state.json(通知済みの記録)・.github/workflows/ 内のファイル
+name: Update from upstream
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 毎日の実行(state.json のコミット)と重ならないようにする
+concurrency:
+  group: steam-sale-notifier
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: HERO-Yuki/App_054
+  UPSTREAM_BRANCH: master
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 配布元そのものでは実行しない
+        if: github.repository == env.UPSTREAM_REPO
+        run: |
+          echo "配布元リポジトリでは更新は不要です。"
+          exit 1
+
+      - name: 自分のリポジトリを取得
+        uses: actions/checkout@v5
+
+      - name: 配布元の最新版を取得
+        run: git clone --depth 1 --branch "$UPSTREAM_BRANCH" "https://github.com/$UPSTREAM_REPO.git" "$RUNNER_TEMP/upstream"
+
+      - name: src/ と requirements.txt を置き換え
+        run: |
+          rm -rf src
+          cp -r "$RUNNER_TEMP/upstream/src" src
+          cp "$RUNNER_TEMP/upstream/requirements.txt" requirements.txt
+          find src -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+      - name: Python 3.12 をセットアップ
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: 更新後のコードが動くか確認(config.yaml との相性も見る)
+        run: |
+          pip install -r requirements.txt
+          python -c "from src.config import load_config; load_config('config.yaml'); import src.main"
+
+      - name: 変更をコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src requirements.txt
+          if git diff --cached --quiet; then
+            echo "すでに最新版です。変更はありません。"
+          else
+            git commit -m "chore: 配布元の最新版に更新 ($(git -C "$RUNNER_TEMP/upstream" rev-parse --short HEAD))"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
